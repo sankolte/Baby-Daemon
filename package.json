@@ -18,6 +18,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "chokidar": "^5.0.0"
+    "@google/genai": "^2.6.0",
+    "chokidar": "^5.0.0",
+    "dotenv": "^17.4.2"
   }
 }

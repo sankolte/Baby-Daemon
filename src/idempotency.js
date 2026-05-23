@@ -25,6 +25,7 @@
 import crypto from 'crypto';  // Built-in Node.js module — no install needed
 import fs from 'fs';           // File System module — also built-in
 import path from 'path';       // Path utilities — also built-in
+import { fileURLToPath } from 'url';
 
 // ─────────────────────────────────────────────────────────
 // WHERE WE STORE PROCESSED KEYS
@@ -35,10 +36,10 @@ import path from 'path';       // Path utilities — also built-in
  *   In older Node.js (CommonJS), you had __dirname for "this file's folder".
  *   With modern ES Modules (which we use, see "type": "module" in package.json),
  *   you use import.meta.url instead.
- *   new URL('.', import.meta.url).pathname gives us the current directory.
+ *   fileURLToPath(import.meta.url) converts the file URL to a standard OS path.
+ *   path.dirname gets the folder containing this file (src/).
  */
-const __dirname = new URL('.', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1');
-// The replace() above fixes a Windows quirk: Node gives "/C:/..." but Windows needs "C:/..."
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const KEYS_FILE = path.join(__dirname, '..', 'processed_keys.json');
 // path.join builds a file path correctly for any OS

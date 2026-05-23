@@ -28,6 +28,8 @@ import chokidar from 'chokidar';
 import fs from 'fs';
 import path from 'path';
 import { isAlreadyProcessed, markAsProcessed } from './idempotency.js';
+import { summarizeChatLog } from './summarizer.js';
+import { saveMemoriesForFile } from './memoryStore.js';
 
 // ─────────────────────────────────────────────────────────
 // MAIN EXPORT: startWatcher(watchPath)
@@ -185,18 +187,15 @@ export function startWatcher(watchPath) {
  *   Without ?. we'd crash if stats is undefined.
  *   Fallback: Date.now() gives us current time in ms as a substitute.
  */
-function handleFileEvent(eventType, filePath, stats) {
+async function handleFileEvent(eventType, filePath, stats) {
   const mtimeMs = stats?.mtimeMs ?? Date.now();
-  // ?? is the "nullish coalescing" operator: use right side if left is null or undefined
 
   const relativePath = path.basename(filePath);
-  // path.basename gets just the filename from a full path
-  // "C:/proj101/logs/chat_042.md" → "chat_042.md"
 
   // ── IDEMPOTENCY CHECK ──────────────────────────────────
   if (isAlreadyProcessed(filePath, mtimeMs)) {
     console.log(`  [SKIP]  ${relativePath}  (already processed)`);
-    return; // Stop here — don't process again
+    return;
   }
 
   // ── NEW / CHANGED FILE — PROCESS IT ───────────────────
@@ -207,8 +206,20 @@ function handleFileEvent(eventType, filePath, stats) {
   console.log(`  Size   : ${stats?.size ?? 'unknown'} bytes`);
   console.log(`  ─────────────────────────────────────────`);
 
-  // Phase 1: nothing else to do yet — just mark as processed
-  // Phase 2: this is where we'll call the LLM summarizer
-  markAsProcessed(filePath, mtimeMs);
-  console.log(`  ✓ Recorded. Ready for next change.\n`);
+  try {
+    console.log(`  [LLM]  Extracting memories via Gemini...`);
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const memories = await summarizeChatLog(content, relativePath);
+
+    console.log(`  [DB]   Saving ${memories.length} extracted memories...`);
+    const newCount = saveMemoriesForFile(relativePath, memories);
+
+    // Only record idempotency fingerprint if we successfully processed the file
+    markAsProcessed(filePath, mtimeMs);
+    console.log(`  ✓ Done. Extracted ${memories.length} memories (${newCount} new appended).`);
+    console.log(`  ✓ Recorded version fingerprint. Ready.\n`);
+  } catch (error) {
+    console.error(`  ✗ Failed to process ${relativePath}:`, error.message);
+    console.log(`  ⚠️  Idempotency fingerprint NOT recorded. Will retry next time it changes.\n`);
+  }
 }

@@ -1,0 +1,12 @@
+# Dependency directories
+node_modules/
+
+# Local environment variables
+.env
+.env.local
+
+# Logs and runtime data
+logs/
+*.log
+memory.jsonl
+processed_keys.json

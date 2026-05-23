@@ -1,0 +1,23 @@
+{
+  "name": "baby-daemon",
+  "version": "0.1.0",
+  "description": "A personal AI memory system — file watcher, summarizer, vector search, MCP server.",
+  "type": "module",
+  "bin": {
+    "memory-watch": "./bin/memory-watch.js"
+  },
+  "scripts": {
+    "watch": "node bin/memory-watch.js"
+  },
+  "keywords": [
+    "ai",
+    "memory",
+    "daemon",
+    "mcp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^5.0.0"
+  }
+}

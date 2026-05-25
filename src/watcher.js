@@ -27,9 +27,11 @@
 import chokidar from 'chokidar';
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline/promises';
 import { isAlreadyProcessed, markAsProcessed } from './idempotency.js';
 import { summarizeChatLog } from './summarizer.js';
 import { saveMemoriesForFile } from './memoryStore.js';
+import { syncMemoriesToVectorStore } from './vectorStore.js';
 
 // ─────────────────────────────────────────────────────────
 // MAIN EXPORT: startWatcher(watchPath)
@@ -41,7 +43,8 @@ import { saveMemoriesForFile } from './memoryStore.js';
  *
  * @param {string} watchPath - The folder to watch (passed from CLI)
  */
-export function startWatcher(watchPath) {
+export function startWatcher(watchPath, options = {}) {
+  const requireApproval = options.requireApproval ?? false;
 
   // Verify the folder actually exists before we start
   if (!fs.existsSync(watchPath)) {
@@ -121,12 +124,12 @@ export function startWatcher(watchPath) {
 
   // Handle new files added to the folder
   watcher.on('add', (filePath, stats) => {
-    handleFileEvent('NEW FILE', filePath, stats);
+    handleFileEvent('NEW FILE', filePath, stats, requireApproval);
   });
 
   // Handle existing files that get modified
   watcher.on('change', (filePath, stats) => {
-    handleFileEvent('MODIFIED', filePath, stats);
+    handleFileEvent('MODIFIED', filePath, stats, requireApproval);
   });
 
   // If something goes wrong with the watcher itself
@@ -187,7 +190,7 @@ export function startWatcher(watchPath) {
  *   Without ?. we'd crash if stats is undefined.
  *   Fallback: Date.now() gives us current time in ms as a substitute.
  */
-async function handleFileEvent(eventType, filePath, stats) {
+async function handleFileEvent(eventType, filePath, stats, requireApproval) {
   const mtimeMs = stats?.mtimeMs ?? Date.now();
 
   const relativePath = path.basename(filePath);
@@ -211,12 +214,47 @@ async function handleFileEvent(eventType, filePath, stats) {
     const content = await fs.promises.readFile(filePath, 'utf-8');
     const memories = await summarizeChatLog(content, relativePath);
 
-    console.log(`  [DB]   Saving ${memories.length} extracted memories...`);
-    const newCount = saveMemoriesForFile(relativePath, memories);
+    let approvedMemories = [];
+
+    // Interactive approval mode logic
+    if (requireApproval && memories.length > 0) {
+      console.log(`\n  ⚠️  Approval Mode: Please review the following ${memories.length} candidate memories extracted from ${relativePath}:`);
+      
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+      for (let i = 0; i < memories.length; i++) {
+        const mem = memories[i];
+        console.log(`\n  ┌── [Candidate #${i + 1}/${memories.length}] ─────────────────────────────`);
+        console.log(`  │  Type       : ${mem.type.toUpperCase()}`);
+        console.log(`  │  Confidence : ${mem.confidence.toFixed(2)}`);
+        console.log(`  │  Content    : "${mem.content}"`);
+        console.log(`  │  Related    : ${mem.related_files.join(', ') || 'none'}`);
+        console.log(`  │  Evidence   : "${mem.original_text.replace(/\r?\n/g, ' ')}"`);
+        console.log(`  └─────────────────────────────────────────────────────────`);
+
+        const answer = await rl.question('  Approve this memory? (Y/n): ');
+        if (answer.trim().toLowerCase() !== 'n') {
+          approvedMemories.push(mem);
+          console.log('  ✅ Approved.');
+        } else {
+          console.log('  ❌ Rejected.');
+        }
+      }
+      rl.close();
+      console.log('');
+    } else {
+      approvedMemories = memories;
+    }
+
+    console.log(`  [DB]   Saving ${approvedMemories.length} memories to memory.jsonl...`);
+    const newCount = saveMemoriesForFile(relativePath, approvedMemories);
+
+    console.log(`  [DB]   Syncing ${approvedMemories.length} memories to LanceDB...`);
+    await syncMemoriesToVectorStore(relativePath, approvedMemories);
 
     // Only record idempotency fingerprint if we successfully processed the file
     markAsProcessed(filePath, mtimeMs);
-    console.log(`  ✓ Done. Extracted ${memories.length} memories (${newCount} new appended).`);
+    console.log(`  ✓ Done. Saved ${approvedMemories.length} memories (${newCount} total in file).`);
     console.log(`  ✓ Recorded version fingerprint. Ready.\n`);
   } catch (error) {
     console.error(`  ✗ Failed to process ${relativePath}:`, error.message);

@@ -52,7 +52,8 @@ if (args.includes('--help') || args.includes('-h')) {
 }
 
 // The watch path is the first real argument
-const watchPath = args[0];
+const requireApproval = args.includes('--require-approval') || args.includes('-a');
+const watchPath = args.find(arg => !arg.startsWith('-'));
 
 if (!watchPath) {
   console.error('\n  ✗ Error: No folder path provided.\n');
@@ -64,7 +65,7 @@ if (!watchPath) {
 // START THE WATCHER
 // ─────────────────────────────────────────────────────────
 
-startWatcher(watchPath);
+startWatcher(watchPath, { requireApproval });
 
 // ─────────────────────────────────────────────────────────
 // HELP TEXT
@@ -72,20 +73,24 @@ startWatcher(watchPath);
 
 function printHelp() {
   console.log(`
-  Baby Daemon — memory-watch (Phase 1)
+  Baby Daemon — memory-watch (Phase 3)
 
   USAGE:
-    memory-watch <folder-path>
+    memory-watch <folder-path> [options]
+
+  OPTIONS:
+    -a, --require-approval    Prompt to confirm or reject each extracted memory
 
   EXAMPLES:
     memory-watch ./logs
-    memory-watch C:/Users/you/ai-chat-logs
+    memory-watch ./logs --require-approval
     memory-watch .            (watch current folder)
 
   WHAT IT DOES:
     Watches <folder-path> for new and modified files.
-    Prints detected files and skips duplicates (idempotency check).
-    Saves processed file fingerprints to processed_keys.json.
+    Extracts structured memories via Gemini API.
+    Saves memories to memory.jsonl and syncs with LanceDB vector database.
+    Skips duplicates using idempotency fingerprints.
 
   STOP:
     Press Ctrl+C to stop the watcher gracefully.

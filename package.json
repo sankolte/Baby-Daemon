@@ -4,7 +4,8 @@
   "description": "A personal AI memory system — file watcher, summarizer, vector search, MCP server.",
   "type": "module",
   "bin": {
-    "memory-watch": "./bin/memory-watch.js"
+    "memory-watch": "./bin/memory-watch.js",
+    "memory": "./bin/memory.js"
   },
   "scripts": {
     "watch": "node bin/memory-watch.js"
@@ -19,7 +20,10 @@
   "license": "MIT",
   "dependencies": {
     "@google/genai": "^2.6.0",
+    "@lancedb/lancedb": "^0.29.0",
     "chokidar": "^5.0.0",
-    "dotenv": "^17.4.2"
+    "chrono-node": "^2.9.1",
+    "dotenv": "^17.4.2",
+    "minisearch": "^7.2.0"
   }
 }

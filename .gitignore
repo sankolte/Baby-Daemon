@@ -10,3 +10,5 @@ logs/
 *.log
 memory.jsonl
 processed_keys.json
+.lancedb/
+.embeddings_cache.json

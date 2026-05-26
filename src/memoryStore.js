@@ -64,3 +64,32 @@ export function saveMemoriesForFile(fileName, memories) {
     throw error;
   }
 }
+
+/**
+ * readAllMemories()
+ * Reads all memories from the JSONL file.
+ *
+ * @returns {Array} All memories in the store
+ */
+export function readAllMemories() {
+  try {
+    if (!fs.existsSync(MEMORY_FILE)) {
+      return [];
+    }
+    const content = fs.readFileSync(MEMORY_FILE, 'utf-8');
+    return content
+      .split('\n')
+      .filter(line => line.trim())
+      .map(line => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.error('Error reading all memories:', error.message);
+    throw error;
+  }
+}

@@ -17,6 +17,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as chrono from 'chrono-node';
 import { searchMemories, archiveMemories } from '../src/vectorStore.js';
+import { readAllMemories } from '../src/memoryStore.js';
 
 // Resolve __dirname equivalent in ES Modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,8 @@ if (command === 'dump') {
   await handleDump();
 } else if (command === 'archive') {
   await handleArchive();
+} else if (command === 'read') {
+  await handleRead();
 } else {
   // If first argument is 'search', execute search with subsequent args.
   // Otherwise, treat the entire set of args as search (implicit search).
@@ -242,6 +245,111 @@ async function handleArchive() {
 }
 
 // ─────────────────────────────────────────────────────────
+// READ HANDLER
+// ─────────────────────────────────────────────────────────
+async function handleRead() {
+  console.log(`\n  ${BOLD}${CYAN}🧠 Loading Project Knowledge Briefing...${RESET}`);
+  try {
+    const allMemories = readAllMemories();
+    const activeMemories = allMemories.filter(m => m.status === 'active');
+
+    if (activeMemories.length === 0) {
+      console.log(`\n  ${YELLOW}No active memories found in this project.${RESET}\n`);
+      return;
+    }
+
+    console.log(`  ${GREEN}Loaded ${activeMemories.length} active memories.${RESET}`);
+    console.log(`  ${DIM}──────────────────────────────────────────────────${RESET}`);
+
+    // Grouping
+    const groups = {
+      decision: [],
+      architecture_note: [],
+      bug: [],
+      resolved_bug: [],
+      file_change: [],
+      proposed_idea: [],
+      open_question: [],
+      other: []
+    };
+
+    activeMemories.forEach(mem => {
+      const type = mem.type;
+      if (groups[type]) {
+        groups[type].push(mem);
+      } else {
+        groups[type] = groups[type] || [];
+        groups[type].push(mem);
+      }
+    });
+
+    const displayOrder = [
+      { key: 'decision', title: 'Decisions', emoji: '📢', color: GREEN },
+      { key: 'architecture_note', title: 'Architecture Notes', emoji: '🏗️', color: BLUE },
+      { key: 'bug', title: 'Active Bugs', emoji: '🐛', color: RED },
+      { key: 'resolved_bug', title: 'Resolved Bugs', emoji: '✅', color: GREEN },
+      { key: 'file_change', title: 'File Changes', emoji: '📝', color: CYAN },
+      { key: 'proposed_idea', title: 'Proposed Ideas', emoji: '💡', color: YELLOW },
+      { key: 'open_question', title: 'Open Questions', emoji: '❓', color: MAGENTA }
+    ];
+
+    // Find any other groups that are not in displayOrder
+    const otherKeys = Object.keys(groups).filter(k => !displayOrder.find(o => o.key === k) && k !== 'other');
+    otherKeys.forEach(k => {
+      if (groups[k] && groups[k].length > 0) {
+        groups.other.push(...groups[k]);
+      }
+    });
+
+    displayOrder.forEach(({ key, title, emoji, color }) => {
+      const items = groups[key] || [];
+      if (items.length === 0) return;
+
+      console.log(`\n  ${color}${BOLD}${emoji} ${title.toUpperCase()} (${items.length})${RESET}`);
+      console.log(`  ${DIM}─────────────────────────────────────────${RESET}`);
+
+      items.forEach((item, index) => {
+        const formattedDate = new Date(item.timestamp).toLocaleDateString();
+        const chatFile = item.source?.chat_file || 'unknown source';
+        
+        console.log(`  ${color}${BOLD}${index + 1}.${RESET} ${BOLD}${item.content}${RESET}`);
+        console.log(`     ${DIM}• Source: ${chatFile} (${formattedDate})${RESET}`);
+        if (item.related_files && item.related_files.length > 0) {
+          console.log(`     ${DIM}• Files:  ${item.related_files.join(', ')}${RESET}`);
+        }
+        if (item.tags && item.tags.length > 0) {
+          console.log(`     ${DIM}• Tags:   ${item.tags.join(', ')}${RESET}`);
+        }
+      });
+    });
+
+    // Handle other/unknown types
+    if (groups.other.length > 0) {
+      console.log(`\n  ${MAGENTA}${BOLD}🔮 Other Memories (${groups.other.length})${RESET}`);
+      console.log(`  ${DIM}─────────────────────────────────────────${RESET}`);
+      groups.other.forEach((item, index) => {
+        const formattedDate = new Date(item.timestamp).toLocaleDateString();
+        const chatFile = item.source?.chat_file || 'unknown source';
+        console.log(`  ${MAGENTA}${BOLD}${index + 1}.${RESET} [${item.type.toUpperCase()}] ${BOLD}${item.content}${RESET}`);
+        console.log(`     ${DIM}• Source: ${chatFile} (${formattedDate})${RESET}`);
+        if (item.related_files && item.related_files.length > 0) {
+          console.log(`     ${DIM}• Files:  ${item.related_files.join(', ')}${RESET}`);
+        }
+        if (item.tags && item.tags.length > 0) {
+          console.log(`     ${DIM}• Tags:   ${item.tags.join(', ')}${RESET}`);
+        }
+      });
+    }
+
+    console.log(`\n  ${DIM}──────────────────────────────────────────────────${RESET}`);
+    console.log(`  ${GREEN}✓ Done. Use these active memories for project context!${RESET}\n`);
+
+  } catch (error) {
+    console.error(`\n  ${RED}✗ Read failed:${RESET}`, error.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────
 
@@ -259,11 +367,13 @@ function printHelp() {
 
   ${BOLD}USAGE:${RESET}
     memory [search] "<query>" [options]
+    memory read
     memory dump [options]
     memory archive [options]
 
   ${BOLD}SUBCOMMANDS:${RESET}
     ${CYAN}search${RESET}                  Query stored memories (vector search with keyword fallback)
+    ${CYAN}read${RESET}                    Output all active project memories grouped by category
     ${CYAN}dump${RESET}                    Output raw log file contents directly (bypassing vector search)
     ${CYAN}archive${RESET}                 Move old memories to an archive table to optimize searches
 

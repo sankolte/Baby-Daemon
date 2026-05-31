@@ -1,29 +1,63 @@
 {
   "name": "baby-daemon",
-  "version": "0.1.0",
-  "description": "A personal AI memory system — file watcher, summarizer, vector search, MCP server.",
+  "version": "1.0.0",
+  "description": "AI memory system for coding agents — file watcher, LLM summarizer, vector search, and MCP server. Give your AI persistent memory across sessions.",
   "type": "module",
   "bin": {
+    "baby-daemon": "./bin/baby-daemon.js",
     "memory-watch": "./bin/memory-watch.js",
     "memory": "./bin/memory.js"
   },
   "scripts": {
-    "watch": "node bin/memory-watch.js"
+    "watch": "node bin/memory-watch.js",
+    "mcp": "node mcp-server.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "mcp-server.js",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "ai",
     "memory",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "coding-agent",
+    "vector-search",
+    "lancedb",
+    "gemini",
     "daemon",
-    "mcp"
+    "context",
+    "claude",
+    "cursor",
+    "cline"
   ],
-  "author": "",
+  "author": "sankolte",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sankolte/Baby-Daemon.git"
+  },
+  "homepage": "https://github.com/sankolte/Baby-Daemon#readme",
+  "bugs": {
+    "url": "https://github.com/sankolte/Baby-Daemon/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@google/genai": "^2.6.0",
     "@lancedb/lancedb": "^0.29.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chokidar": "^5.0.0",
     "chrono-node": "^2.9.1",
     "dotenv": "^17.4.2",
-    "minisearch": "^7.2.0"
+    "minisearch": "^7.2.0",
+    "zod": "^4.4.3"
   }
 }
+

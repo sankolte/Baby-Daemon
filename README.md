@@ -121,7 +121,7 @@ Memories are always generated from **original raw logs**, never from previous su
 - [x] **Phase 2** — Gemini summarization pipeline + structured schema
 - [x] **Phase 3** — LanceDB vector store + semantic search
 - [x] **Phase 4** — Integrity (SHA-256 hashes, fallback dump, approval mode, archival)
-- [ ] **Phase 5** — MCP Server (wrap as plug-and-play tool for any MCP-compatible agent)
+- [x] **Phase 5** — MCP Server (wrap as plug-and-play tool for any MCP-compatible agent)
 
 ---
 
@@ -148,6 +148,7 @@ memory-watch ./logs
 ## Project Structure
 
 ```
+├── mcp-server.js           ← MCP server entry point (Phase 5)
 ├── bin/
 │   ├── memory-watch.js     ← Start the daemon
 │   └── memory.js           ← Search, dump, archive
@@ -160,16 +161,61 @@ memory-watch ./logs
 │   └── config.js           ← Gemini SDK init
 ├── memory.jsonl            ← Flat structured memory store (gitignored)
 ├── .lancedb/               ← Local vector DB (gitignored)
+├── claude_desktop_config.example.json  ← Example MCP config
 └── .env.example            ← Environment variable template
 ```
 
 ---
 
-## What's Next
+## Phase 5 — MCP Server
 
-Wrapping the entire system as an **MCP (Model Context Protocol) server** — so any MCP-compatible agent (Claude, Cursor, Cline, Windsurf) can call `memory/search` or `memory/save` natively without any CLI setup.
+Baby Daemon is now available as an **MCP (Model Context Protocol) server**. Any MCP-compatible AI host can use it natively — no CLI required.
 
-Baby Daemon becomes **infrastructure for AI memory.**
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `memory_search` | Semantic + keyword search with filters (type, date, file, limit) |
+| `memory_store` | Push raw text through the summarization pipeline and store |
+| `memory_dump` | Dump all stored memories with optional filters |
+| `memory_archive` | Move old memories to archive table |
+| `memory_read` | Full project knowledge briefing grouped by category |
+
+**Resource:** `memory://status` — system health, counts, LanceDB status  
+**Prompt:** `continue_from_memory` — context-rich prompt to resume work from previous sessions
+
+### Setup for Claude Desktop
+
+Add to `%APPDATA%/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "baby-daemon": {
+      "command": "node",
+      "args": ["C:\\path\\to\\proj101\\mcp-server.js"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop — Baby Daemon tools appear automatically.
+
+### Setup for Cursor / Cline / Other MCP Hosts
+
+Most MCP hosts use a similar JSON config. Point it to:
+```
+command: node
+args: ["<absolute-path-to>/mcp-server.js"]
+```
+
+### Testing with MCP Inspector
+
+```bash
+npx @modelcontextprotocol/inspector node mcp-server.js
+```
+
+Opens a web UI where you can interactively test all tools, read resources, and invoke prompts.
 
 ---
 

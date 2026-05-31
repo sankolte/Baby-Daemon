@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Local environment and runtime data
+.env
+.env.local
+.lancedb/
+memory.jsonl
+processed_keys.json
+.embeddings_cache.json
+logs/
+
+# Documentation / design docs (not needed by users)
+Baby Daemon.md
+mcp_deep_dive.md
+commads.md
+
+# Git internals
+.git/
+.gitignore
+
+# Editor config
+.vscode/
+.idea/
+
+# Example config (users create their own)
+claude_desktop_config.example.json

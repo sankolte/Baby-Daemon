@@ -69,7 +69,7 @@ function handleDefault() {
   }
 
   console.log(`
-  ${B}${C}🧠 Baby Daemon${R} ${D}v0.1.0${R}
+  ${B}${C}🧠 Baby Daemon${R} ${D}v1.0.1${R}
   ${D}AI memory system for coding agents${R}
 
   ${B}STATUS:${R}

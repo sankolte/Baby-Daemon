@@ -23,6 +23,48 @@ Every AI coding session is stateless by default. Switch agents, restart a sessio
 
 ---
 
+## ⚡ Quick Start (5 minutes)
+
+**Step 1 — Install globally**
+```bash
+npm install -g baby-daemon
+```
+
+**Step 2 — Check status & run setup guide**
+```bash
+baby-daemon          # shows current status
+baby-daemon setup    # step-by-step setup instructions
+```
+
+**Step 3 — Get a free Gemini API key**
+Go to → [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey) → click **Create API key**
+
+**Step 4 — Create a `.env` file in your project root**
+```bash
+echo GEMINI_API_KEY=your_key_here > .env
+```
+
+**Step 5 — Create a logs folder and start watching**
+```bash
+mkdir logs
+memory-watch ./logs
+```
+Drop any AI chat log (`.md`, `.txt`) into `./logs` — Baby Daemon extracts memories automatically.
+
+**Step 6 — Search your memories**
+```bash
+memory search "why did auth break?"
+memory read                          # full project briefing
+```
+
+**Step 7 (Optional) — Connect to Claude Desktop / Cursor as an MCP tool**
+```bash
+baby-daemon mcp-config   # prints the JSON config to copy
+```
+Copy the JSON into your MCP host config, restart — Baby Daemon tools appear automatically.
+
+---
+
 ## CLI Commands
 
 ```bash

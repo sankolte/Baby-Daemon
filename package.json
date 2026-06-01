@@ -1,12 +1,12 @@
 {
   "name": "baby-daemon",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI memory system for coding agents — file watcher, LLM summarizer, vector search, and MCP server. Give your AI persistent memory across sessions.",
   "type": "module",
   "bin": {
-    "baby-daemon": "./bin/baby-daemon.js",
-    "memory-watch": "./bin/memory-watch.js",
-    "memory": "./bin/memory.js"
+    "baby-daemon": "bin/baby-daemon.js",
+    "memory-watch": "bin/memory-watch.js",
+    "memory": "bin/memory.js"
   },
   "scripts": {
     "watch": "node bin/memory-watch.js",
@@ -60,4 +60,3 @@
     "zod": "^4.4.3"
   }
 }
-

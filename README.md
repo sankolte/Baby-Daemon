@@ -38,11 +38,25 @@ memory search "authentication bug"
 # Filtered search
 memory search "caching strategy" --type decision --since "3 days ago"
 
+# View all active memories grouped by category
+memory read
+
 # Dump raw logs (bypasses vector DB — emergency fallback)
 memory dump --since "yesterday"
 
 # Archive old memories to keep search fast
 memory archive --age 14
+
+# ── Setup & Maintenance ─────────────────────
+
+# First-time setup guide
+baby-daemon setup
+
+# Show MCP config JSON for Claude Desktop / Cursor
+baby-daemon mcp-config
+
+# Sync missing memories from memory.jsonl → LanceDB (run after a DB reset)
+baby-daemon resync
 ```
 
 ---
@@ -105,7 +119,7 @@ Fixes:
 - `status: outdated` for contradicted memories + archival system
 
 ### 3-Layer Hybrid Search
-1. **LanceDB vector search** — cosine similarity, 0.70 threshold
+1. **LanceDB vector search** — cosine similarity, 0.50 threshold
 2. **Metadata filtering** — type, date (natural language via chrono-node), file
 3. **MiniSearch keyword fallback** — if vector search returns nothing
 4. **Raw dump fallback** — if everything else fails, `memory dump` bypasses the AI layer entirely
@@ -150,8 +164,9 @@ memory-watch ./logs
 ```
 ├── mcp-server.js           ← MCP server entry point (Phase 5)
 ├── bin/
-│   ├── memory-watch.js     ← Start the daemon
-│   └── memory.js           ← Search, dump, archive
+│   ├── baby-daemon.js      ← Main CLI: status, setup, mcp-config, resync
+│   ├── memory-watch.js     ← Start the file watcher daemon
+│   └── memory.js           ← Search, read, dump, archive
 ├── src/
 │   ├── watcher.js          ← chokidar + pipeline orchestration
 │   ├── summarizer.js       ← Gemini call + JSON schema enforcement

@@ -198,7 +198,7 @@ export async function searchMemories(queryText, filters = {}) {
         const results = await table
           .vectorSearch(queryVector)
           .distanceType('cosine')
-          .limit(50) // Retrieve more to allow client-side filtering
+          .limit(100) // Retrieve more to allow client-side filtering
           .toArray();
 
         // Map and score: cosine similarity is (1 - cosine distance)
@@ -217,8 +217,8 @@ export async function searchMemories(queryText, filters = {}) {
           };
         });
 
-        // Filter by threshold (score >= 0.70)
-        let filtered = scoredResults.filter(item => item.score >= 0.70);
+        // Filter by threshold (score >= 0.50)
+        let filtered = scoredResults.filter(item => item.score >= 0.50);
 
         // Apply metadata filters
         if (filtered.length > 0) {
@@ -408,3 +408,76 @@ export async function archiveMemories({ ageDays = 30 } = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────
+// RESYNC ALL MEMORIES FROM memory.jsonl → LanceDB
+// ─────────────────────────────────────────────────────────
+
+/**
+ * resyncAllMemories()
+ * Reads memory.jsonl and syncs any chat_file groups that are
+ * missing from the LanceDB memories table (e.g. were processed
+ * before LanceDB was set up, or after a DB reset).
+ *
+ * @returns {Promise<Object>} - { synced, skipped, total }
+ */
+export async function resyncAllMemories() {
+  if (!fs.existsSync(MEMORY_FILE)) {
+    return { synced: 0, skipped: 0, total: 0, msg: 'No memory.jsonl found.' };
+  }
+
+  // Load all memories from flat file
+  const content = fs.readFileSync(MEMORY_FILE, 'utf-8');
+  const allMemories = content
+    .split('\n')
+    .filter(line => line.trim())
+    .map(line => { try { return JSON.parse(line); } catch { return null; } })
+    .filter(Boolean);
+
+  if (allMemories.length === 0) {
+    return { synced: 0, skipped: 0, total: 0, msg: 'memory.jsonl is empty.' };
+  }
+
+  // Group by source chat_file
+  const byFile = {};
+  for (const mem of allMemories) {
+    const key = mem.source?.chat_file || 'unknown';
+    if (!byFile[key]) byFile[key] = [];
+    byFile[key].push(mem);
+  }
+
+  // Find which files are already in LanceDB (skip those)
+  let existingFiles = new Set();
+  if (isLanceDbAvailable) {
+    try {
+      const db = await lancedb.connect(DB_PATH);
+      const tableNames = await db.tableNames();
+      if (tableNames.includes('memories')) {
+        const table = await db.openTable('memories');
+        const rows = await table.query().toArray();
+        existingFiles = new Set(rows.map(r => r.chat_file));
+      }
+    } catch (e) {
+      // Non-fatal — will attempt full resync
+    }
+  }
+
+  const missingFiles = Object.keys(byFile).filter(f => !existingFiles.has(f));
+  let synced = 0;
+
+  for (const chatFile of missingFiles) {
+    const memories = byFile[chatFile];
+    await syncMemoriesToVectorStore(chatFile, memories);
+    synced += memories.length;
+  }
+
+  const skipped = allMemories.length - synced;
+  return {
+    synced,
+    skipped,
+    total: allMemories.length,
+    syncedFiles: missingFiles,
+    msg: missingFiles.length === 0
+      ? 'LanceDB is already up to date — no missing entries found.'
+      : `Synced ${synced} memories from ${missingFiles.length} file(s): ${missingFiles.join(', ')}`,
+  };
+}

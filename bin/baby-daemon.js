@@ -19,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { resyncAllMemories } from '../src/vectorStore.js';
 
 // Load .env from current working directory (where the user runs the command)
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -45,6 +46,8 @@ if (command === 'setup') {
   handleSetup();
 } else if (command === 'mcp-config') {
   handleMcpConfig();
+} else if (command === 'resync') {
+  await handleResync();
 } else {
   handleDefault();
 }
@@ -84,6 +87,7 @@ function handleDefault() {
   ${B}SETUP:${R}
     ${C}baby-daemon setup${R}            First-time setup guide
     ${C}baby-daemon mcp-config${R}       Show MCP server config for Claude/Cursor
+    ${C}baby-daemon resync${R}           Sync missing memories into LanceDB vector store
 
   ${B}MCP SERVER:${R}
     ${D}For AI hosts (Claude Desktop, Cursor, Cline):${R}
@@ -186,4 +190,30 @@ function handleMcpConfig() {
   ${B}RESOURCE:${R}  ${C}memory://status${R}   ${D}— System health dashboard${R}
   ${B}PROMPT:${R}    ${C}continue_from_memory${R} ${D}— Context-rich session bootstrap${R}
   `);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RESYNC: Sync missing memories from memory.jsonl → LanceDB
+// ─────────────────────────────────────────────────────────────────
+
+async function handleResync() {
+  console.log(`
+  ${B}${C}🔄 Baby Daemon — Resync${R}
+  ${D}Syncing missing memories from memory.jsonl → LanceDB vector store...${R}
+`);
+
+  try {
+    const result = await resyncAllMemories();
+    if (result.synced === 0) {
+      console.log(`  ${G}✓ ${result.msg}${R}`);
+      console.log(`  ${D}Total memories: ${result.total}${R}\n`);
+    } else {
+      console.log(`  ${G}✓ ${result.msg}${R}`);
+      console.log(`  ${D}Synced : ${result.synced} new memories${R}`);
+      console.log(`  ${D}Skipped: ${result.skipped} already in LanceDB${R}`);
+      console.log(`  ${D}Total  : ${result.total} memories in memory.jsonl${R}\n`);
+    }
+  } catch (error) {
+    console.error(`  ${RED}✗ Resync failed:${R}`, error.message);
+  }
 }

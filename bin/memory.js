@@ -19,6 +19,30 @@ import * as chrono from 'chrono-node';
 import { searchMemories, archiveMemories } from '../src/vectorStore.js';
 import { readAllMemories } from '../src/memoryStore.js';
 
+// ─────────────────────────────────────────────────────────
+// ENCODING HELPER — auto-detect UTF-16 LE/BE via BOM
+// ─────────────────────────────────────────────────────────
+
+function readFileAutoEncoding(filePath) {
+  const buf = fs.readFileSync(filePath);
+  // UTF-16 LE BOM: FF FE
+  if (buf[0] === 0xFF && buf[1] === 0xFE) {
+    return buf.slice(2).toString('utf16le');
+  }
+  // UTF-16 BE BOM: FE FF
+  if (buf[0] === 0xFE && buf[1] === 0xFF) {
+    // Swap bytes then decode as utf16le
+    const swapped = Buffer.allocUnsafe(buf.length - 2);
+    for (let i = 2; i < buf.length - 1; i += 2) {
+      swapped[i - 2] = buf[i + 1];
+      swapped[i - 1] = buf[i];
+    }
+    return swapped.toString('utf16le');
+  }
+  // Default: UTF-8
+  return buf.toString('utf-8');
+}
+
 // Resolve __dirname equivalent in ES Modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.join(__dirname, '..');
@@ -204,7 +228,7 @@ async function handleDump() {
       console.log(`  ${DIM}Modified: ${stat.mtime.toLocaleString()} | Size: ${stat.size} bytes${RESET}`);
       console.log(`  ${DIM}─────────────────────────────────────────${RESET}`);
       
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const content = readFileAutoEncoding(fullPath);
       console.log(content.trim() ? content : '  (empty file)');
       console.log(`\n  ${DIM}─────────────────────────────────────────${RESET}`);
       dumpedCount++;

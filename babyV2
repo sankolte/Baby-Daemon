@@ -1,0 +1,650 @@
+# Baby Daemon v2 — Multi-Agent Architecture Implementation Plan
+
+## Background & Current State
+
+Baby Daemon v1 is a **working monolithic system** with these capabilities:
+- **File watcher** (Chokidar) → detects new/changed chat logs
+- **Summarizer** (Gemini 2.5 Flash) → extracts structured memories via LLM
+- **Memory store** (`memory.jsonl`) → JSONL flat-file persistence
+- **Vector store** (LanceDB + MiniSearch fallback) → semantic + keyword search
+- **Idempotency** (SHA-256 fingerprints) → duplicate prevention
+- **MCP server** → 5 tools, 1 resource, 1 prompt for AI host integration
+- **CLI** → `memory-watch`, `memory search`, `memory read`, `memory dump`, `baby-daemon`
+
+**v1 files:**
+| File | Role | Lines |
+|---|---|---|
+| [watcher.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/watcher.js) | File watching + pipeline orchestration | 264 |
+| [summarizer.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/summarizer.js) | LLM memory extraction | 152 |
+| [memoryStore.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/memoryStore.js) | JSONL read/write | 96 |
+| [vectorStore.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/vectorStore.js) | LanceDB + MiniSearch | 484 |
+| [idempotency.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/idempotency.js) | Duplicate prevention | 160 |
+| [config.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/config.js) | Gemini API init | 28 |
+| [mcp-server.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/mcp-server.js) | MCP tool/resource/prompt server | 554 |
+
+**The v1 problem:** Everything runs in a single pipeline: `watch → summarize → store → vectorize`. There is no contradiction detection, no knowledge graph, no risk analysis, no planner, no self-evaluation, and no reasoning about the project as a whole.
+
+---
+
+## v2 Vision
+
+Transform the monolithic pipeline into a **multi-agent architecture** where each agent has a single responsibility, agents communicate through a shared event bus, and the system can reason about projects at a higher level.
+
+```
+Chat Logs / Git / IDE Events
+        ↓
+┌─────────────────────────┐
+│   Observation Agent      │  ← Watches filesystem, git, chats
+└──────────┬──────────────┘
+           ↓ (normalized events)
+┌─────────────────────────┐
+│   Memory Extraction Agent│  ← Extracts decisions, bugs, ideas
+└──────────┬──────────────┘
+           ↓ (candidate memories)
+┌─────────────────────────┐
+│   Contradiction Agent    │  ← Detects outdated/conflicting memories
+└──────────┬──────────────┘
+           ↓ (validated memories)
+┌─────────────────────────┐
+│   Knowledge Graph Agent  │  ← Builds relationships between entities
+└──────────┬──────────────┘
+           ↓ (enriched graph)
+┌─────────────────────────┐
+│   Planner Agent          │  ← Generates engineering tasks
+└──────────┬──────────────┘
+           ↓ (tasks + priorities)
+┌─────────────────────────┐
+│   Risk Agent             │  ← Detects architectural risks
+└──────────┬──────────────┘
+           ↓ (risk annotations)
+┌─────────────────────────┐
+│   Reasoning Agent        │  ← Answers: What happened? What next?
+└──────────┘
+           ↓
+    Storage + Vector DB + Knowledge Graph
+           ↓
+    Dashboard / CLI / MCP
+```
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **TypeScript Migration:** The plan migrates from plain JS to TypeScript for type safety across agent boundaries. This means all existing `.js` files will be rewritten as `.ts`. The existing v1 code will remain functional during migration (we build v2 alongside, not destructively).
+
+> [!IMPORTANT]
+> **New Dependencies:** This plan introduces PostgreSQL (via SQLite initially for simplicity), BullMQ (via an in-process queue initially), and optionally Neo4j. The initial implementation uses **lightweight alternatives** (SQLite + in-memory queue + adjacency-list graph) to avoid heavy infrastructure, with migration paths to full-scale services later.
+
+> [!WARNING]
+> **Breaking Change — Memory Schema:** v2 adds new fields to memory objects (`superseded_by`, `supersedes`, `graph_node_id`, `risk_level`, `task_ids`). Old `memory.jsonl` entries will be auto-migrated with a migration script, but the new schema is not backward-compatible with v1 consumers.
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> 1. **LLM Provider:** v1 uses Gemini exclusively. Should v2 support multiple LLM providers (OpenAI, Anthropic, Gemini) via an adapter pattern, or stay Gemini-only for now?
+
+> [!IMPORTANT]
+> 2. **Dashboard:** The spec mentions React + Tailwind. Should we build the dashboard as part of this v2 implementation, or defer it to v2.1? Building it adds significant scope.
+
+> [!IMPORTANT]
+> 3. **Queue System:** Should we start with BullMQ (requires Redis) or use a simpler in-process event emitter + file-based queue to keep the project dependency-light?
+
+> [!IMPORTANT]
+> 4. **Knowledge Graph Storage:** Full Neo4j, or start with an in-memory adjacency list persisted to JSON? Neo4j is powerful but adds operational complexity.
+
+---
+
+## Proposed Changes
+
+### Phase 1: Foundation — Project Restructure & Agent Framework
+
+This phase builds the scaffolding that all agents will use. No new AI features yet, just the architecture.
+
+---
+
+#### [NEW] tsconfig.json
+TypeScript configuration with strict mode, ES2022 target, ESM module resolution.
+
+#### [MODIFY] [package.json](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/package.json)
+- Add `typescript`, `tsx`, `@types/node` as dev dependencies
+- Add `better-sqlite3` for lightweight relational storage
+- Add build scripts (`tsc`, `dev` with `tsx`)
+- Update bin entries to point to compiled output
+- Keep all existing dependencies
+
+#### [NEW] `src/v2/core/types.ts`
+Shared type definitions for the entire v2 system:
+```typescript
+// Agent event types
+interface AgentEvent {
+  id: string;
+  type: EventType;
+  source: AgentName;
+  timestamp: string;
+  payload: unknown;
+  correlationId: string;  // traces events through the pipeline
+}
+
+// Memory v2 schema (superset of v1)
+interface MemoryV2 {
+  // ... all v1 fields ...
+  superseded_by?: string;
+  supersedes?: string;
+  graph_node_id?: string;
+  risk_level?: 'low' | 'medium' | 'high' | 'critical';
+  task_ids?: string[];
+  pipeline_run_id: string;
+}
+
+// Agent interface contract
+interface Agent {
+  name: AgentName;
+  process(event: AgentEvent): Promise<AgentEvent[]>;
+  health(): Promise<AgentHealth>;
+}
+```
+
+#### [NEW] `src/v2/core/event-bus.ts`
+In-process event bus using Node.js EventEmitter:
+- Typed event emission and subscription
+- Event persistence to `events.jsonl` for replay/debugging
+- Correlation ID propagation for tracing
+- Dead-letter queue for failed events
+- Backpressure handling (if agent is slow, queue events)
+
+```
+Design Decision: Start with EventEmitter, NOT BullMQ.
+Reason: No Redis dependency, simpler for a dev tool.
+Migration path: Replace EventEmitter with BullMQ later by
+implementing the same interface over Redis queues.
+```
+
+#### [NEW] `src/v2/core/agent-runner.ts`
+The orchestrator that:
+- Loads and initializes all agents
+- Wires them together via the event bus
+- Manages the pipeline order (Observation → Memory → Contradiction → Graph → Planner → Risk → Reasoning)
+- Handles agent errors (retry 3x, then dead-letter)
+- Exposes health checks for all agents
+- Supports running agents in parallel where possible (e.g., Planner and Risk can run concurrently after Graph)
+
+#### [NEW] `src/v2/core/storage.ts`
+Unified storage layer wrapping:
+- `memory.jsonl` (existing, for backward compat)
+- SQLite via `better-sqlite3` (new, for relational queries — tasks, graph edges, agent state)
+- LanceDB (existing, for vector search)
+- File system (existing, for raw logs)
+
+Schema for SQLite:
+```sql
+-- Memories (mirrors JSONL but queryable)
+CREATE TABLE memories (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  content TEXT NOT NULL,
+  original_text TEXT,
+  confidence REAL,
+  status TEXT DEFAULT 'active',
+  timestamp TEXT,
+  source_file TEXT,
+  hash TEXT UNIQUE,
+  superseded_by TEXT,
+  pipeline_run_id TEXT
+);
+
+-- Knowledge Graph edges
+CREATE TABLE graph_edges (
+  id TEXT PRIMARY KEY,
+  source_node TEXT NOT NULL,
+  source_type TEXT NOT NULL,  -- 'file', 'memory', 'decision', 'bug', 'feature'
+  target_node TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  relationship TEXT NOT NULL, -- 'depends_on', 'caused_by', 'relates_to', 'implements', 'supersedes'
+  weight REAL DEFAULT 1.0,
+  created_at TEXT
+);
+
+-- Engineering tasks
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  priority TEXT,  -- 'critical', 'high', 'medium', 'low'
+  status TEXT DEFAULT 'pending',  -- 'pending', 'in_progress', 'done', 'cancelled'
+  source_memory_ids TEXT,  -- JSON array of memory IDs that generated this task
+  risk_level TEXT,
+  created_at TEXT
+);
+
+-- Risks
+CREATE TABLE risks (
+  id TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  severity TEXT,  -- 'low', 'medium', 'high', 'critical'
+  category TEXT,  -- 'architecture', 'dependency', 'security', 'performance', 'data'
+  affected_files TEXT,  -- JSON array
+  source_memory_ids TEXT,  -- JSON array
+  status TEXT DEFAULT 'active',
+  created_at TEXT
+);
+
+-- Agent run log
+CREATE TABLE agent_runs (
+  id TEXT PRIMARY KEY,
+  agent_name TEXT NOT NULL,
+  event_id TEXT,
+  status TEXT,  -- 'started', 'completed', 'failed'
+  input_summary TEXT,
+  output_summary TEXT,
+  duration_ms INTEGER,
+  error TEXT,
+  created_at TEXT
+);
+```
+
+#### [NEW] `src/v2/core/llm-adapter.ts`
+Abstraction over LLM calls:
+- Currently wraps Gemini (existing `config.js` logic)
+- Structured output enforcement (JSON schema)
+- Retry with exponential backoff
+- Token counting and cost tracking
+- Prepared for future multi-provider support
+
+---
+
+### Phase 2: Core Agents
+
+Each agent is a self-contained module that implements the `Agent` interface.
+
+---
+
+#### [NEW] `src/v2/agents/observation-agent.ts`
+**Refactors v1's** [watcher.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/watcher.js) + [idempotency.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/idempotency.js)
+
+Responsibilities:
+- Watches filesystem (Chokidar — same as v1)
+- Watches git changes (new — `git log --oneline` polling or `git diff`)
+- Normalizes all inputs into `ObservationEvent`:
+  ```typescript
+  interface ObservationEvent {
+    type: 'file_added' | 'file_changed' | 'git_commit' | 'chat_log';
+    filePath: string;
+    content: string;
+    diff?: string;
+    metadata: {
+      size: number;
+      modifiedAt: string;
+      gitCommitHash?: string;
+    };
+  }
+  ```
+- Idempotency check (same SHA-256 logic from v1)
+- Emits `observation.new` events to the bus
+
+**Key difference from v1:** The observation agent does NOT call the LLM. It only normalizes raw input. The summarizer logic moves to the Memory Extraction Agent.
+
+---
+
+#### [NEW] `src/v2/agents/memory-agent.ts`
+**Refactors v1's** [summarizer.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/summarizer.js) + [memoryStore.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/src/memoryStore.js)
+
+Responsibilities:
+- Receives `observation.new` events
+- Calls LLM to extract structured memories (same prompt strategy as v1, enhanced)
+- Enriches with IDs, timestamps, hashes, evidence
+- Stores to `memory.jsonl` AND SQLite
+- Syncs to LanceDB for vector search
+- Emits `memory.extracted` events with the new memories
+
+**Enhancements over v1:**
+- Better prompt that explicitly handles multi-language conversations (Hindi-English mix from your logs)
+- Batch processing: if multiple files change rapidly, batch them into one LLM call
+- Deduplication: before storing, check SQLite for semantically similar existing memories
+
+---
+
+#### [NEW] `src/v2/agents/contradiction-agent.ts`
+**Entirely new agent — does not exist in v1.**
+
+Responsibilities:
+- Receives `memory.extracted` events
+- For each new memory, queries existing memories of the same topic/tags
+- Calls LLM with prompt:
+  ```
+  "Given these existing memories and this new memory, determine if
+   any existing memories are contradicted, superseded, or outdated.
+   Return which memories should be marked as superseded and why."
+  ```
+- Updates `status` field of old memories to `superseded`
+- Sets `superseded_by` and `supersedes` links
+- Emits `contradiction.detected` events (if any found)
+- Emits `memory.validated` events (memories that passed contradiction check)
+
+**Example:**
+```
+Existing: "Using REST APIs" (decision, confidence 0.9)
+New:      "Migrated to GraphQL" (decision, confidence 0.95)
+Result:   Old memory marked superseded, link established
+```
+
+---
+
+#### [NEW] `src/v2/agents/knowledge-graph-agent.ts`
+**Entirely new agent.**
+
+Responsibilities:
+- Receives `memory.validated` events
+- Extracts entities and relationships from memories:
+  - Files mentioned → file nodes
+  - Bugs → bug nodes linked to files
+  - Decisions → decision nodes linked to features/files
+  - APIs → API nodes linked to implementation files
+- Stores edges in SQLite `graph_edges` table
+- Provides query interface:
+  - "What depends on `auth.ts`?"
+  - "What decisions affect the payment feature?"
+  - "Show me the impact chain of this bug"
+- Emits `graph.updated` events
+
+**Graph Node Types:** `file`, `feature`, `bug`, `decision`, `api`, `dependency`, `config`
+**Edge Types:** `depends_on`, `caused_by`, `relates_to`, `implements`, `supersedes`, `part_of`, `affects`
+
+```
+Design Decision: Use SQLite adjacency list, NOT Neo4j initially.
+Reason: Zero infrastructure. SQLite can handle 100K edges easily.
+Migration path: Add Neo4j adapter later for visualization/complex queries.
+```
+
+---
+
+#### [NEW] `src/v2/agents/planner-agent.ts`
+**Entirely new agent.**
+
+Responsibilities:
+- Receives `graph.updated` events
+- Analyzes the knowledge graph + recent memories
+- Calls LLM to generate engineering tasks:
+  ```
+  "Given these recent project memories and the current knowledge graph,
+   generate a prioritized list of engineering tasks. Consider:
+   - Open bugs that need fixing
+   - Proposed ideas that should be implemented
+   - Open questions that need resolution
+   - Technical debt from architecture notes"
+  ```
+- Stores tasks in SQLite `tasks` table
+- Avoids duplicating existing tasks (checks by semantic similarity)
+- Emits `tasks.generated` events
+
+**Task output schema:**
+```typescript
+interface EngTask {
+  id: string;
+  title: string;
+  description: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  sourceMemoryIds: string[];
+  estimatedComplexity: 'trivial' | 'small' | 'medium' | 'large';
+  suggestedFiles: string[];
+}
+```
+
+---
+
+#### [NEW] `src/v2/agents/risk-agent.ts`
+**Entirely new agent.**
+
+Responsibilities:
+- Receives `graph.updated` and `tasks.generated` events
+- Analyzes:
+  - Files with many dependencies (high fan-in = risky to change)
+  - Decisions that contradict each other
+  - Features without tests mentioned
+  - Dependencies that are outdated/abandoned
+  - Architectural patterns that conflict
+- Calls LLM with graph context for risk assessment
+- Stores risks in SQLite `risks` table
+- Emits `risk.detected` events
+
+**Risk categories:** `architecture`, `dependency`, `security`, `performance`, `data_integrity`, `complexity`
+
+---
+
+#### [NEW] `src/v2/agents/reasoning-agent.ts`
+**Entirely new agent — the "brain" of the system.**
+
+Responsibilities:
+- Can be invoked on-demand (not just from pipeline events)
+- Answers high-level questions:
+  - "What happened in the last 3 days?"
+  - "What changed since the last session?"
+  - "What should we work on next?"
+  - "Explain the architecture of the auth system"
+  - "What's the impact if we change `database.ts`?"
+- Uses ALL data sources: memories, graph, tasks, risks, raw logs
+- Calls LLM with rich context assembled from multiple sources
+- Returns structured reasoning with evidence
+
+This agent powers the MCP `project_reason` tool and the future dashboard.
+
+---
+
+#### [NEW] `src/v2/agents/harness-agent.ts`
+**Entirely new agent — the self-evaluation system.**
+
+Responsibilities:
+- Runs periodically (configurable interval, e.g., every 10 pipeline runs)
+- Evaluates:
+  - **Retrieval Accuracy:** Runs test queries against known memories, measures precision@k
+  - **Memory Precision:** Samples memories and checks if `type` and `confidence` are reasonable (via LLM judge)
+  - **Duplicate Rate:** Scans for semantically duplicate memories in the store
+  - **Hallucination Rate:** Compares `content` vs `original_text` for drift (via LLM judge)
+  - **Contradiction Detection:** Checks if known contradictions were caught
+  - **Graph Consistency:** Validates graph edges point to existing nodes
+- Stores metrics in SQLite `agent_runs` table
+- Emits `harness.report` events
+- Logs a report to `harness_reports/` folder
+
+**Metrics output:**
+```typescript
+interface HarnessReport {
+  timestamp: string;
+  retrieval_accuracy: number;    // 0-1
+  memory_precision: number;      // 0-1
+  duplicate_rate: number;        // 0-1 (lower is better)
+  hallucination_rate: number;    // 0-1 (lower is better)
+  contradiction_detection: number; // 0-1
+  graph_consistency: number;     // 0-1
+  task_quality: number;          // 0-1
+  overall_health: number;        // weighted average
+}
+```
+
+---
+
+### Phase 3: Integration Layer
+
+---
+
+#### [MODIFY] [mcp-server.js](file:///c:/Users/kolte/OneDrive/Desktop/all%20dev%20stuff/proj101/mcp-server.js) → `src/v2/mcp-server.ts`
+Rewrite as TypeScript, add new MCP tools:
+
+| Tool | Description |
+|---|---|
+| `memory_search` | (existing, enhanced with contradiction info) |
+| `memory_store` | (existing) |
+| `memory_dump` | (existing) |
+| `memory_archive` | (existing) |
+| `memory_read` | (existing, now includes graph context) |
+| `project_reason` | **NEW** — Ask the Reasoning Agent any question |
+| `project_tasks` | **NEW** — Get current engineering tasks |
+| `project_risks` | **NEW** — Get current architectural risks |
+| `project_graph` | **NEW** — Query the knowledge graph |
+| `project_health` | **NEW** — Get the latest harness evaluation report |
+| `project_timeline` | **NEW** — Get a chronological view of project events |
+
+#### [NEW] `src/v2/cli/index.ts`
+Enhanced CLI that wraps all agents:
+- `baby-daemon watch ./logs` — starts observation agent
+- `baby-daemon status` — shows agent health, memory count, graph stats
+- `baby-daemon reason "what happened today?"` — invokes reasoning agent
+- `baby-daemon tasks` — lists current tasks
+- `baby-daemon risks` — lists current risks
+- `baby-daemon graph "auth.ts"` — shows graph neighbors
+- `baby-daemon harness` — runs evaluation harness
+- `baby-daemon migrate` — migrates v1 data to v2 schema
+
+---
+
+### Phase 4: Migration & Backward Compatibility
+
+---
+
+#### [NEW] `src/v2/migration/v1-to-v2.ts`
+Migration script that:
+1. Reads existing `memory.jsonl`
+2. Imports all memories into SQLite with new fields (default values)
+3. Verifies LanceDB entries match
+4. Rebuilds idempotency keys
+5. Creates initial graph edges from existing memory `related_files`
+6. Generates migration report
+
+#### [NEW] `src/v2/compat/v1-bridge.ts`
+Ensures v1 CLI commands (`memory search`, `memory read`, etc.) continue to work by routing to v2 internals.
+
+---
+
+## Project Directory Structure (v2)
+
+```
+proj101/
+├── src/
+│   ├── config.js              ← v1 (kept for backward compat)
+│   ├── watcher.js             ← v1 (kept)
+│   ├── summarizer.js          ← v1 (kept)
+│   ├── memoryStore.js         ← v1 (kept)
+│   ├── vectorStore.js         ← v1 (kept)
+│   ├── idempotency.js         ← v1 (kept)
+│   └── v2/
+│       ├── core/
+│       │   ├── types.ts
+│       │   ├── event-bus.ts
+│       │   ├── agent-runner.ts
+│       │   ├── storage.ts
+│       │   └── llm-adapter.ts
+│       ├── agents/
+│       │   ├── observation-agent.ts
+│       │   ├── memory-agent.ts
+│       │   ├── contradiction-agent.ts
+│       │   ├── knowledge-graph-agent.ts
+│       │   ├── planner-agent.ts
+│       │   ├── risk-agent.ts
+│       │   ├── reasoning-agent.ts
+│       │   └── harness-agent.ts
+│       ├── cli/
+│       │   └── index.ts
+│       ├── migration/
+│       │   └── v1-to-v2.ts
+│       ├── compat/
+│       │   └── v1-bridge.ts
+│       └── mcp-server.ts
+├── data/
+│   ├── baby-daemon.sqlite     ← NEW: relational store
+│   └── harness_reports/       ← NEW: evaluation reports
+├── mcp-server.js              ← v1 (kept, delegates to v2)
+├── bin/                       ← v1 CLIs (kept, delegate to v2)
+├── logs/
+├── memory.jsonl
+├── .lancedb/
+├── tsconfig.json              ← NEW
+└── package.json               ← MODIFIED
+```
+
+---
+
+## Implementation Order
+
+```mermaid
+gantt
+    title Baby Daemon v2 Build Order
+    dateFormat  YYYY-MM-DD
+    
+    section Phase 1 - Foundation
+    TypeScript setup + types       :p1a, 2026-07-22, 1d
+    Event bus                      :p1b, after p1a, 1d
+    Storage layer (SQLite)         :p1c, after p1a, 2d
+    LLM adapter                   :p1d, after p1a, 1d
+    Agent runner                  :p1e, after p1b, 1d
+    
+    section Phase 2 - Agents
+    Observation Agent              :p2a, after p1e, 2d
+    Memory Extraction Agent        :p2b, after p2a, 2d
+    Contradiction Agent            :p2c, after p2b, 2d
+    Knowledge Graph Agent          :p2d, after p2c, 3d
+    Planner Agent                  :p2e, after p2d, 2d
+    Risk Agent                     :p2f, after p2d, 2d
+    Reasoning Agent                :p2g, after p2e, 3d
+    Harness Agent                  :p2h, after p2g, 2d
+    
+    section Phase 3 - Integration
+    MCP Server v2                  :p3a, after p2g, 2d
+    CLI v2                         :p3b, after p3a, 2d
+    
+    section Phase 4 - Migration
+    v1 → v2 migration             :p4a, after p3b, 1d
+    Backward compat bridge         :p4b, after p4a, 1d
+```
+
+**Estimated total: ~25 working days** (can be parallelized)
+
+I recommend building in this strict order:
+1. **Foundation first** — types, event bus, storage, LLM adapter, agent runner
+2. **Agents left to right** — Observation → Memory → Contradiction → Graph → Planner → Risk → Reasoning → Harness
+3. **Integration** — MCP + CLI after agents work
+4. **Migration** — Last, once v2 is stable
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Each agent gets unit tests with mock events
+- Integration test: feed a sample chat log through the full pipeline and verify all stores are populated
+- Harness agent serves as continuous automated evaluation
+- Commands:
+  ```bash
+  npm test                    # Run all unit tests
+  npm run test:integration    # Full pipeline test with sample data
+  npm run test:harness        # Run evaluation harness
+  ```
+
+### Manual Verification
+1. Start `baby-daemon watch ./logs` with v2
+2. Drop a test chat log into `./logs`
+3. Verify: memories extracted → contradictions checked → graph updated → tasks generated → risks identified
+4. Run `baby-daemon reason "what happened?"` and verify coherent answer
+5. Connect MCP server to Claude Desktop and test all new tools
+6. Run migration on existing v1 data and verify no data loss
+
+---
+
+## Tech Stack Summary
+
+| Component | v1 | v2 |
+|---|---|---|
+| Language | JavaScript (ESM) | TypeScript (ESM) |
+| LLM | Gemini only | Gemini (extensible adapter) |
+| Memory Store | JSONL only | JSONL + SQLite |
+| Vector DB | LanceDB + MiniSearch | LanceDB + MiniSearch (same) |
+| Graph DB | None | SQLite adjacency list |
+| Queue | None (synchronous) | EventEmitter (in-process) |
+| CLI | Custom args parsing | Same (enhanced) |
+| MCP | 5 tools | 11 tools |
+| Evaluation | None | Harness Agent |
+| Contradiction | None | Contradiction Agent |
+| Task Gen | None | Planner Agent |
+| Risk Analysis | None | Risk Agent |
+| Reasoning | None | Reasoning Agent |
